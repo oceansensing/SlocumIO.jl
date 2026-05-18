@@ -65,24 +65,24 @@ end
     @test paired_extension(".ebd") == ".dbd"
     @test paired_extension(".sbd") == ".tbd"
     @test paired_extension(".tbd") == ".sbd"
-    @test paired_filename("/a/b/comet-2024-1-0-0.dbd") == "/a/b/comet-2024-1-0-0.ebd"
+    @test paired_filename("/a/b/glider-2024-1-0-0.dbd") == "/a/b/glider-2024-1-0-0.ebd"
 end
 
 @testset "Slocum filename sorting" begin
     files = [
-        "comet-2024-100-1-9.dbd",
-        "comet-2024-100-1-10.dbd",
-        "comet-2024-100-1-2.dbd",
-        "comet-2024-100-2-0.dbd",
-        "comet-2024-99-7-0.dbd",
+        "glider-2024-100-1-9.dbd",
+        "glider-2024-100-1-10.dbd",
+        "glider-2024-100-1-2.dbd",
+        "glider-2024-100-2-0.dbd",
+        "glider-2024-99-7-0.dbd",
     ]
     sort_slocum!(files)
     @test files == [
-        "comet-2024-99-7-0.dbd",
-        "comet-2024-100-1-2.dbd",
-        "comet-2024-100-1-9.dbd",
-        "comet-2024-100-1-10.dbd",
-        "comet-2024-100-2-0.dbd",
+        "glider-2024-99-7-0.dbd",
+        "glider-2024-100-1-2.dbd",
+        "glider-2024-100-1-9.dbd",
+        "glider-2024-100-1-10.dbd",
+        "glider-2024-100-2-0.dbd",
     ]
 end
 
@@ -185,6 +185,10 @@ if HAS_REFERENCE
                 ["m_depth", "m_heading", "m_pitch", "m_roll", "m_battery"]),
             ("/mnt/user-data/uploads/02010000.sbd",
                 ["m_depth"]),
+            ("/mnt/user-data/uploads/02010000.mbd",
+                ["m_depth", "m_heading", "m_pitch", "m_roll"]),
+            ("/mnt/user-data/uploads/02010000.ebd",
+                ["sci_water_temp", "sci_water_cond", "sci_water_pressure"]),
             ("/mnt/user-data/uploads/02010000.tbd",
                 ["sci_water_temp", "sci_water_cond", "sci_water_pressure"]),
         ]
