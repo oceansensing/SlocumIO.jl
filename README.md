@@ -171,6 +171,7 @@ work, JLDBDReader.jl is likewise distributed under the
 **GNU General Public License v3.0 or later** (see [LICENSE](LICENSE)).
 The byte-for-byte validation against `dbdreader`'s output
 (`test/reference_fingerprints.json`, `tools/julia_reference.py`) is original to
-this package. Note the GPL applies to this reader only: packages that consume
+this package. If you use JLDBDReader.jl in published work, please also credit
+`dbdreader` (the `CITATION.cff` carries it as a reference). Note the GPL applies to this reader only: packages that consume
 its *output tables* (e.g. GliderADCP.jl's `slocum_nav`) are not derivatives and
 carry their own licenses.

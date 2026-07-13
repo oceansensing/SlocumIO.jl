@@ -26,3 +26,13 @@ abstract: >-
   Julia translation of the Python dbdreader package by Lucas Merckelbach
   (GPL-3.0-or-later, hence this package's license), validated byte-for-byte
   against dbdreader's output via SHA-256 fingerprints of the decoded arrays.
+references:
+  - type: software
+    title: "dbdreader: a reader for the binary data files of Slocum ocean gliders"
+    authors:
+      - family-names: Merckelbach
+        given-names: Lucas
+        affiliation: "Helmholtz-Zentrum Hereon"
+    repository-code: "https://github.com/smerckel/dbdreader"
+    license: GPL-3.0-or-later
+    notes: "JLDBDReader.jl is a Julia translation of this package; please credit it in published work."
