@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Python reference implementation that mirrors the Julia JLDBDReader algorithm
+Python reference implementation that mirrors the Julia SlocumIO algorithm
 byte-for-byte.  Used to validate the algorithm against `dbdreader`'s output
 when Julia cannot be executed in the sandbox.
 

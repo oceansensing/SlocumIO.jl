@@ -1,4 +1,6 @@
-# JLDBDReader.jl
+# SlocumIO.jl
+
+*(formerly SlocumIO.jl — renamed for symmetry with SeaExplorerIO.jl; the old GitHub URLs redirect)*
 
 A pure-Julia reader for Slocum ocean glider binary data files (`.dbd`, `.sbd`, `.mbd`, `.ebd`, `.tbd`, `.nbd`) and their LZ4-compressed variants (`.dcd`, `.scd`, `.mcd`, `.ecd`, `.tcd`, `.ncd`).
 
@@ -11,7 +13,7 @@ Validated byte-for-byte against `dbdreader`'s output for real glider data files.
 ## Quick start
 
 ```julia
-using JLDBDReader
+using SlocumIO
 
 # Single file
 dbd = open_dbd("00010010.dbd"; cachedir="/path/to/cache")
@@ -58,7 +60,7 @@ sci by extension at open time, regardless of which directory they came from.
 
 ## What this fixes vs `dbdreader`
 
-| Issue | `dbdreader` (Python + C) | `JLDBDReader.jl` |
+| Issue | `dbdreader` (Python + C) | `SlocumIO.jl` |
 |-------|--------------------------|------------------|
 | Build dependency | C compiler + headers required | Pure Julia, zero non-Julia deps |
 | Error handling | `exit(1)` in C on read failure | Julia exceptions, recoverable |
@@ -149,13 +151,13 @@ The Julia algorithm was validated by:
 ## Installation
 
 ```julia
-] add https://github.com/yourorg/JLDBDReader.jl
+] add https://github.com/yourorg/SlocumIO.jl
 ```
 
 For development:
 
 ```julia
-] dev /path/to/JLDBDReader.jl
+] dev /path/to/SlocumIO.jl
 ```
 
 ## License
@@ -164,14 +166,14 @@ The original `dbdreader` is GPL-3.0.  This is a clean-room reimplementation base
 
 ## Licensing and provenance
 
-JLDBDReader.jl is a Julia translation of
+SlocumIO.jl is a Julia translation of
 [`dbdreader`](https://github.com/smerckel/dbdreader) by Lucas Merckelbach
 (Helmholtz-Zentrum Hereon), which is licensed GPL-3.0-or-later. As a derivative
-work, JLDBDReader.jl is likewise distributed under the
+work, SlocumIO.jl is likewise distributed under the
 **GNU General Public License v3.0 or later** (see [LICENSE](LICENSE)).
 The byte-for-byte validation against `dbdreader`'s output
 (`test/reference_fingerprints.json`, `tools/julia_reference.py`) is original to
-this package. If you use JLDBDReader.jl in published work, please also credit
+this package. If you use SlocumIO.jl in published work, please also credit
 `dbdreader` (the `CITATION.cff` carries it as a reference). Note the GPL applies to this reader only: packages that consume
 its *output tables* (e.g. GliderADCP.jl's `slocum_nav`) are not derivatives and
 carry their own licenses.

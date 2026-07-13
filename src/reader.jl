@@ -1,7 +1,7 @@
 """
 Binary reader for Slocum DBD-family files.
 
-This is the core of JLDBDReader.jl, replacing the C extension in `dbdreader`.
+This is the core of SlocumIO.jl, replacing the C extension in `dbdreader`.
 It has been validated against real glider files (and `dbdreader`'s output)
 via a Python twin algorithm: all SHA-256 fingerprints over the float64 result
 arrays match `dbdreader` byte-for-byte.

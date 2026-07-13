@@ -1,9 +1,9 @@
-# JLDBDReader.jl — basic usage
+# SlocumIO.jl — basic usage
 #
 # Run from the package directory with: `julia --project=. examples/basic_usage.jl`
 # Adjust `cachedir` and file paths to your environment.
 
-using JLDBDReader
+using SlocumIO
 
 # ── 1. Open a single file ─────────────────────────────────────────────────────
 

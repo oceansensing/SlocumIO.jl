@@ -1,6 +1,6 @@
 using Test
-using JLDBDReader
-using JLDBDReader: bswap_int16, bswap_float32, bswap_float64,
+using SlocumIO
+using SlocumIO: bswap_int16, bswap_float32, bswap_float64,
                    decode_state_bytes!, detect_byte_order,
                    parse_sensor_list, parse_fileopen_time,
                    is_valid_nmea, is_lat_param,
@@ -17,7 +17,7 @@ const HAS_REFERENCE = let
     isfile(p) && isfile(f1)
 end
 
-@testset "JLDBDReader.jl" begin
+@testset "SlocumIO.jl" begin
 
 # ── Unit tests (no I/O) ──────────────────────────────────────────────────────
 
@@ -122,11 +122,11 @@ end
     # 0xAA = 10101010 = [2,2,2,2] = all UPDATED
     states = Vector{UInt8}(undef, 8)
     decode_state_bytes!(states, IOBuffer([0xAA, 0xAA]), 2, 8)
-    @test all(==(JLDBDReader.UPDATED), states)
+    @test all(==(SlocumIO.UPDATED), states)
     # 0x00 = all NOTSET, 0x55 = [1,1,1,1] = all SAME
     decode_state_bytes!(states, IOBuffer([0x00, 0x55]), 2, 8)
-    @test states[1:4] == fill(JLDBDReader.NOTSET, 4)
-    @test states[5:8] == fill(JLDBDReader.SAME, 4)
+    @test states[1:4] == fill(SlocumIO.NOTSET, 4)
+    @test states[5:8] == fill(SlocumIO.SAME, 4)
 end
 
 @testset "fileopen_time parsing" begin
@@ -139,7 +139,7 @@ end
 @testset "LZ4 block decoder" begin
     # Trivial: 4 literal bytes, no match
     # token=0x40 (lit_len=4, match_len=0), then 4 literal bytes
-    @test JLDBDReader.lz4_decompress_block(UInt8[0x40, 0x48, 0x65, 0x6C, 0x6F]) == UInt8[0x48, 0x65, 0x6C, 0x6F]
+    @test SlocumIO.lz4_decompress_block(UInt8[0x40, 0x48, 0x65, 0x6C, 0x6F]) == UInt8[0x48, 0x65, 0x6C, 0x6F]
 end
 
 @testset "Cache directory resolution" begin
@@ -325,17 +325,17 @@ if HAS_REFERENCE
         sci_dir = "/tmp/split_test/sci"
         if isdir(eng_dir) && isdir(sci_dir)
             # Uppercase input, finds uppercase sibling in sci_dir
-            p = JLDBDReader.find_paired_file(joinpath(eng_dir, "02390000.DBD"),
+            p = SlocumIO.find_paired_file(joinpath(eng_dir, "02390000.DBD"),
                                               [sci_dir])
             @test p == joinpath(sci_dir, "02390000.EBD")
 
             # Lowercase input, finds lowercase sibling
-            p = JLDBDReader.find_paired_file(joinpath(eng_dir, "02010000.dbd"),
+            p = SlocumIO.find_paired_file(joinpath(eng_dir, "02010000.dbd"),
                                               [sci_dir])
             @test p == joinpath(sci_dir, "02010000.ebd")
 
             # MBD: no sibling EBD in sci/, no MBD-pair in eng/ — should be nothing
-            p = JLDBDReader.find_paired_file(joinpath(eng_dir, "02010000.mbd"),
+            p = SlocumIO.find_paired_file(joinpath(eng_dir, "02010000.mbd"),
                                               [sci_dir])
             @test p === nothing    # no .nbd exists
         end

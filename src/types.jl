@@ -1,5 +1,5 @@
 """
-Core types for JLDBDReader.jl.
+Core types for SlocumIO.jl.
 
 Design principle: a sensor's CYCLE POSITION (its position in the state-byte
 encoding of one cycle) is implicit in its position in `Vector{SensorInfo}`.

@@ -1,5 +1,5 @@
 """
-    JLDBDReader
+    SlocumIO
 
 A pure-Julia reader for Slocum ocean glider binary data files
 (`.dbd`, `.sbd`, `.mbd`, `.ebd`, `.tbd`, `.nbd`) and their LZ4-compressed
@@ -12,7 +12,7 @@ architectural issues identified in a critical evaluation of that codebase.
 # Quick start
 
 ```julia
-using JLDBDReader
+using SlocumIO
 
 # Single file
 dbd = open_dbd("00010010.dbd", cachedir="/path/to/cac")
@@ -40,7 +40,7 @@ ts = get_data(m, "m_depth")
 
 See [`open_dbd`](@ref), [`MultiDBD`](@ref), [`get_data`](@ref), [`get_sync`](@ref).
 """
-module JLDBDReader
+module SlocumIO
 
 using Dates
 using Printf

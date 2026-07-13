@@ -20,7 +20,7 @@
 \lstset{style=code}
 
 \title{A Critical Evaluation of \texttt{dbdreader} \\
-       \large and a Pure-Julia Replacement (\texttt{JLDBDReader.jl})}
+       \large and a Pure-Julia Replacement (\texttt{SlocumIO.jl})}
 \author{Translation analysis and reimplementation notes}
 \date{}
 
@@ -39,7 +39,7 @@ used in operational glider data pipelines.
 This document audits \texttt{dbdreader}'s implementation — the C
 extension, the Python wrapper, and the LZ4 layer — identifies concrete
 bugs and design problems, and describes a Julia replacement,
-\texttt{JLDBDReader.jl}, validated byte-for-byte against \texttt{dbdreader}'s
+\texttt{SlocumIO.jl}, validated byte-for-byte against \texttt{dbdreader}'s
 output on real glider files.
 
 \section{Architectural overview of \texttt{dbdreader}}
@@ -76,7 +76,7 @@ Missing values are encoded as \texttt{1e9} and detected with
         assume IEEE NaN semantics.
 \end{itemize}
 The fix is to emit IEEE \texttt{NaN} directly, which is what
-\texttt{JLDBDReader.jl} does.
+\texttt{SlocumIO.jl} does.
 
 \paragraph{3. NMEA validation gap: \texttt{minutes} $\geq$ 60.}
 \texttt{dbdreader}'s NMEA-to-decimal conversion checks only that the
@@ -84,7 +84,7 @@ absolute value is below the degree limit ($90$ for latitude, $180$ for
 longitude).  A value like \texttt{5360.0} (53\textdegree{}60\textquotesingle) passes the
 check and converts to \texttt{54.0\textdegree{}} silently.  This happens in
 practice when the glider's GPS reports malformed sentences.
-\texttt{JLDBDReader.jl} adds a minutes-less-than-60 check.
+\texttt{SlocumIO.jl} adds a minutes-less-than-60 check.
 
 \paragraph{4. \texttt{setlocale} mutation at module import.}
 \texttt{dbdreader.py} calls \texttt{locale.setlocale(locale.LC\_ALL, "C")}
@@ -131,7 +131,7 @@ writes bytes containing \texttt{\textbackslash{}n} line terminators.  On
 Windows this produces \texttt{\textbackslash{}r\textbackslash{}n}, which
 the reader then doesn't strip correctly.
 
-\section{The \texttt{JLDBDReader.jl} reimplementation}
+\section{The \texttt{SlocumIO.jl} reimplementation}
 
 The Julia rewrite addresses every item above:
 
@@ -193,7 +193,7 @@ parameters such as \texttt{m\_depth}, \texttt{m\_heading},
 \texttt{sci\_water\_temp}, \texttt{sci\_water\_cond},
 \texttt{sci\_water\_pressure}, and \texttt{sci\_m\_present\_time}.
 
-\subsection{Bugs found during \texttt{JLDBDReader.jl} development}
+\subsection{Bugs found during \texttt{SlocumIO.jl} development}
 
 Self-disclosure: an earlier draft (released as \texttt{SlocumGliders.jl})
 had two bugs caught during real-data validation:
@@ -231,7 +231,7 @@ prevent regressions.
 
 \subsection{What the package does \emph{not} do}
 
-\texttt{JLDBDReader.jl} reads the raw binary; it does not provide:
+\texttt{SlocumIO.jl} reads the raw binary; it does not provide:
 \begin{itemize}[leftmargin=*,topsep=1pt,itemsep=0pt]
   \item Higher-level products: calibrated CTD, dive segmentation, glider
         flight model.  These belong in a downstream package.

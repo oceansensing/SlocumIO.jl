@@ -11,22 +11,22 @@ at import time.  Cache directories are created only when actually needed.
 
 Platform-appropriate default cache directory path.  Does NOT create it.
 
-- Linux: `~/.local/share/JLDBDReader/cache`
-- macOS: `~/Library/Caches/JLDBDReader`
-- Windows: `%LOCALAPPDATA%\\JLDBDReader\\cache`
-- Other: `~/.JLDBDReader/cache`
+- Linux: `~/.local/share/SlocumIO/cache`
+- macOS: `~/Library/Caches/SlocumIO`
+- Windows: `%LOCALAPPDATA%\\SlocumIO\\cache`
+- Other: `~/.SlocumIO/cache`
 """
 function default_cachedir()::String
     home = homedir()
     if Sys.islinux()
-        return joinpath(home, ".local", "share", "JLDBDReader", "cache")
+        return joinpath(home, ".local", "share", "SlocumIO", "cache")
     elseif Sys.isapple()
-        return joinpath(home, "Library", "Caches", "JLDBDReader")
+        return joinpath(home, "Library", "Caches", "SlocumIO")
     elseif Sys.iswindows()
         appdata = get(ENV, "LOCALAPPDATA", joinpath(home, "AppData", "Local"))
-        return joinpath(appdata, "JLDBDReader", "cache")
+        return joinpath(appdata, "SlocumIO", "cache")
     else
-        return joinpath(home, ".JLDBDReader", "cache")
+        return joinpath(home, ".SlocumIO", "cache")
     end
 end
 
