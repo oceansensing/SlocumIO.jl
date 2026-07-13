@@ -9,6 +9,7 @@ authors:
 version: 0.1.2
 date-released: "2026-07-13"
 license: GPL-3.0-or-later
+doi: 10.5281/zenodo.21345329
 repository-code: "https://github.com/oceansensing/SlocumIO.jl"
 keywords:
   - oceanography

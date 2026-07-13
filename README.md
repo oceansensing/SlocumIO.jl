@@ -1,5 +1,7 @@
 # SlocumIO.jl
 
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.21345329.svg)](https://doi.org/10.5281/zenodo.21345329)
+
 A pure-Julia reader for Slocum ocean glider binary data files (`.dbd`, `.sbd`, `.mbd`, `.ebd`, `.tbd`, `.nbd`) and their LZ4-compressed variants (`.dcd`, `.scd`, `.mcd`, `.ecd`, `.tcd`, `.ncd`).
 
 This is a ground-up Julia translation of the Python [`dbdreader`](https://github.com/smerckel/dbdreader) package by Lucas Merckelbach (Helmholtz-Zentrum Hereon), addressing the architectural issues, bugs, and design shortcomings identified in a critical evaluation of that codebase (see [`docs/evaluation.pdf`](docs/evaluation.pdf)). As a derivative of dbdreader it is licensed **GPL-3.0-or-later**, matching upstream (see Licensing below).
