@@ -19,6 +19,8 @@ test = ["Test", "JSON", "SHA"]
 Dates = "1"
 JSON = "0.21, 1"
 Printf = "1"
-SHA = "1"
+# SHA is a *versioned* stdlib: v0.7.0 through Julia 1.12, v1.0.0 from 1.13.
+# A bare "1" is unsatisfiable on every Julia <= 1.12.
+SHA = "0.7, 1"
 Test = "1"
 julia = "1.10"
