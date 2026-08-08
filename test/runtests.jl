@@ -169,12 +169,17 @@ end
     cands = candidate_cachedirs("/foo/bar")
     @test "/foo/bar" in cands
     @test default_cachedir() in cands
-    # Documented order: user dir, ./cache, <datadir>/cache, <datadir>, platform default
-    with_data = candidate_cachedirs("/foo/bar", "/data/glider/00010000.dbd")
+    # Documented order: user dir, ./cache, <datadir>/cache, <datadir>, platform default.
+    # Derive the expected data directory the same way the implementation does
+    # rather than hardcoding a POSIX literal — abspath normalises separators,
+    # so "/data/glider" becomes "\\data\\glider" on Windows.
+    datafile = joinpath("/data", "glider", "00010000.dbd")
+    datadir  = dirname(abspath(datafile))
+    with_data = candidate_cachedirs("/foo/bar", datafile)
     @test with_data[1] == "/foo/bar"
     @test with_data[2] == joinpath(pwd(), "cache")
-    @test with_data[3] == joinpath("/data/glider", "cache")
-    @test with_data[4] == "/data/glider"
+    @test with_data[3] == joinpath(datadir, "cache")
+    @test with_data[4] == datadir
     @test with_data[end] == default_cachedir()   # platform default is LAST
 end
 
