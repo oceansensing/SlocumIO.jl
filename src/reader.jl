@@ -32,6 +32,11 @@ The 1-byte separator was the most easily-overlooked detail when reading the
 C extension — it is implicit in the `chunksize + 1` advance in the original
 code's `fp_current += chunksize + 1` line.
 
+It separates cycles rather than terminating them: the **final** cycle has no
+trailing separator, so a file ends `state_bytes | chunk` with `chunk_end`
+exactly equal to the file size.  A reader that insists on the separator being
+present silently discards the last complete cycle of every file.
+
 # State byte decoding
 
 Each state byte packs four 2-bit fields, MSB first.  For byte value `b`,
@@ -113,9 +118,17 @@ end
 """
 Fill `states` (length ≥ n_sensors) from `nsb` state bytes read from `io`.
 Each state byte holds 4 fields, MSB first.
+
+`states` is cleared to `NOTSET` first.  The buffer is reused across cycles
+and only `4*nsb` entries get written, so without the clear any position
+beyond `4*nsb` would retain uninitialised memory on the first cycle and the
+*previous* cycle's state on every one after — silently decoding wrong values.
+That happens whenever `4*state_bytes_per_cycle < length(sensors)`, i.e. when
+the cache and the header disagree on the active-sensor count.
 """
 @inline function decode_state_bytes!(states::Vector{UInt8}, io::IO,
                                      nsb::Int, n_sensors::Int)
+    fill!(states, NOTSET)
     i = 0
     @inbounds for _ in 1:nsb
         b = read(io, UInt8)
@@ -221,8 +234,8 @@ function read_binary(dbd::DBDFile,
         total_emitted = 0
 
         while position(io) < fsize
-            # Need at least one state byte block + 1 chunk byte to proceed.
-            position(io) + n_state_bytes >= fsize && break
+            # Need a full block of state bytes to proceed.
+            position(io) + n_state_bytes > fsize && break
 
             decode_state_bytes!(states, io, n_state_bytes, n_sensors)
 
@@ -244,10 +257,16 @@ function read_binary(dbd::DBDFile,
                 end
             end
 
-            # Read requested values from the chunk
+            # Read requested values from the chunk.
+            #
+            # Only the CHUNK has to fit, not chunk+separator: the separator is
+            # written *between* cycles, so a file ends `state_bytes | chunk`
+            # with no trailing separator.  Requiring the separator here dropped
+            # the last complete cycle of every file.  Verified against real
+            # files -- both fixture files end exactly on `chunk_end == fsize`.
             chunk_start = position(io)
-            if chunk_start + chunk_size + 1 > fsize
-                # Truncated final cycle (rare but possible during transmission)
+            if chunk_start + chunk_size > fsize
+                # Genuinely truncated chunk (possible during transmission).
                 break
             end
 

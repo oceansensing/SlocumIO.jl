@@ -35,9 +35,11 @@ t, dep, hdg, pitch, roll = get_sync(dbd, "m_depth", "m_heading", "m_pitch", "m_r
 println("\nSynced length: ", length(t))
 println("Sync uses linear interp for all by default")
 
-# Custom interpolator for heading (correct wrap-around at 0/2π)
+# Custom interpolator for heading (correct wrap-around at 0/2π).
+# The key is the parameter's position in the argument list: m_heading is the
+# 2nd parameter, so key 2 — even though it is returned as the 3rd tuple element.
 t, dep, hdg = get_sync(dbd, "m_depth", "m_heading";
-                       interp_fn = Dict(3 => heading_interp))
+                       interp_fn = Dict(2 => heading_interp))
 
 # ── 5. Multi-file usage ──────────────────────────────────────────────────────
 

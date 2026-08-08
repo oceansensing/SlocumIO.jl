@@ -117,25 +117,3 @@ Decompress an entire compressed glider data file, returning the raw bytes.
 """
 decompress_glider_file(filename::AbstractString)::Vector{UInt8} =
     open(decompress_glider_stream, filename, "r")
-
-"""
-    decompressed_extension(ext) -> String
-
-Map a compressed extension to its uncompressed counterpart.  Examples:
-`.dcd` → `.dbd`, `.ecg` → `.elg`, `.ccc` → `.cac`.
-"""
-function decompressed_extension(ext::AbstractString)::String
-    e = lowercase(ext)
-    startswith(e, ".") || (e = "." * e)
-    length(e) == 4 || error("Invalid compressed extension: $ext")
-    suffix = e[3:4]
-    if suffix == "cg"
-        return e[1:2] * "lg"
-    elseif suffix == "cd"
-        return e[1:2] * "bd"
-    elseif suffix == "cc"
-        return e[1:2] * "ac"
-    else
-        error("Unrecognised compressed extension: $ext")
-    end
-end

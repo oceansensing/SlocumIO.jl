@@ -31,59 +31,58 @@ function default_cachedir()::String
 end
 
 """
-    candidate_cachedirs(user::Union{Nothing,AbstractString}) -> Vector{String}
+    candidate_cachedirs(user, data_filename=nothing) -> Vector{String}
 
-Build a list of cache directories to search, in priority order:
+Build the list of cache directories to search, in priority order:
 
 1. User-provided directory (if any)
-2. `./cache` relative to current working directory
-3. `cache` next to the data file (added at lookup time)
-4. The platform default directory
+2. `./cache` relative to the current working directory
+3. `cache` next to the data file (only when `data_filename` is given)
+4. The data file's own directory (only when `data_filename` is given)
+5. The platform default directory ([`default_cachedir`](@ref))
 
-The first existing directory that contains the requested `.cac` file wins.
+The first directory that contains the requested `.cac`/`.ccc` file wins.
+
+`data_filename` is part of this function rather than being appended by the
+caller so that the returned list is exactly what gets searched — error
+messages built from it therefore name every directory that was tried.
 """
-function candidate_cachedirs(user::Union{Nothing,AbstractString})::Vector{String}
+function candidate_cachedirs(user::Union{Nothing,AbstractString},
+                             data_filename::Union{Nothing,AbstractString}=nothing)::Vector{String}
     dirs = String[]
     if user !== nothing
         push!(dirs, String(user))
     end
     push!(dirs, joinpath(pwd(), "cache"))
+    if data_filename !== nothing
+        d = dirname(abspath(String(data_filename)))
+        push!(dirs, joinpath(d, "cache"))
+        push!(dirs, d)
+    end
     push!(dirs, default_cachedir())
-    return dirs
+    return unique!(dirs)
 end
 
 """
     find_cache_file(crc, cachedir, data_filename=nothing) -> Union{String,Nothing}
 
-Search for a cache file `<crc>.cac` (or its compressed form `<crc>.ccc`).
-Returns the resolved path or `nothing` if not found anywhere.
+Search for a cache file `<crc>.cac` (or its compressed form `<crc>.ccc`) in
+the directories returned by [`candidate_cachedirs`](@ref).  Returns the
+resolved path, or `nothing` if it is not found anywhere.
+
+Both the lowercase and uppercase spellings of the CRC basename are tried:
+Slocum CRCs are hex and the dockserver's case is not consistent, which
+matters on case-sensitive filesystems.
 """
 function find_cache_file(crc::AbstractString,
                         cachedir::Union{Nothing,AbstractString}=nothing,
                         data_filename::Union{Nothing,AbstractString}=nothing)::Union{String,Nothing}
-    candidates = candidate_cachedirs(cachedir)
-    # Add cache dir next to data file
-    if data_filename !== nothing
-        push!(candidates, joinpath(dirname(abspath(data_filename)), "cache"))
-        push!(candidates, dirname(abspath(data_filename)))
-    end
-    for dir in candidates
-        for ext in (".cac", ".ccc")
-            p = joinpath(dir, lowercase(crc) * ext)
+    stems = unique!([lowercase(crc), uppercase(crc)])
+    for dir in candidate_cachedirs(cachedir, data_filename)
+        for stem in stems, ext in (".cac", ".ccc", ".CAC", ".CCC")
+            p = joinpath(dir, stem * ext)
             isfile(p) && return p
         end
     end
     return nothing
-end
-
-"""
-    ensure_cachedir(path) -> String
-
-Ensure the given cache directory exists, creating it if necessary.  Returns
-the absolute path.  Use when you actually intend to write a cache file.
-"""
-function ensure_cachedir(path::AbstractString)::String
-    abs = abspath(path)
-    isdir(abs) || mkpath(abs)
-    return abs
 end

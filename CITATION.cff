@@ -6,8 +6,8 @@ authors:
   - family-names: Gong
     given-names: Donglai
     orcid: "https://orcid.org/0000-0002-1697-1739"
-version: 0.1.2
-date-released: "2026-07-13"
+version: 0.1.3
+date-released: "2026-08-07"
 license: GPL-3.0-or-later
 doi: 10.5281/zenodo.21345329
 repository-code: "https://github.com/oceansensing/SlocumIO.jl"
@@ -26,8 +26,11 @@ abstract: >-
   pure Julia: sensor-list caching, per-parameter extraction, multi-file
   splicing, and synchronization of parameters onto a common time base. It is a
   Julia translation of the Python dbdreader package by Lucas Merckelbach
-  (GPL-3.0-or-later, hence this package's license), validated byte-for-byte
-  against dbdreader's output via SHA-256 fingerprints of the decoded arrays.
+  (GPL-3.0-or-later, hence this package's license). Correctness is checked on
+  every test run against real glider files, comparing SHA-256 fingerprints of
+  the decoded float64 arrays against an independent Python implementation of
+  the same algorithm; an earlier round of development additionally matched
+  dbdreader's output byte-for-byte across 45 (file, parameter) combinations.
 references:
   - type: software
     title: "dbdreader: a reader for the binary data files of Slocum ocean gliders"

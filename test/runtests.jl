@@ -1,4 +1,6 @@
 using Test
+using Dates
+using SHA
 using SlocumIO
 using SlocumIO: bswap_int16, bswap_float32, bswap_float64,
                    decode_state_bytes!, detect_byte_order,
@@ -8,14 +10,34 @@ using SlocumIO: bswap_int16, bswap_float32, bswap_float64,
                    read_file_header, find_cache_file,
                    _slocum_sort_key, sort_slocum!,
                    paired_extension, paired_filename, glob_files,
-                   read_sensor_value
+                   find_paired_file, read_sensor_value, read_cache_file
 
-# Optional reference-data validation (only runs if test fixtures present)
-const HAS_REFERENCE = let
-    p = joinpath(@__DIR__, "reference_fingerprints.json")
-    f1 = "/mnt/user-data/uploads/02010000.dbd"
-    isfile(p) && isfile(f1)
-end
+# ── Test-fixture location ─────────────────────────────────────────────────────
+#
+# Real glider files live in `test/data/` by default.  Point SLOCUMIO_TEST_DATA
+# at another directory to validate against your own archive; it must contain
+# the data files plus a `cache/` subdirectory and a `fingerprints.json`.
+
+const DATA_DIR  = get(ENV, "SLOCUMIO_TEST_DATA", joinpath(@__DIR__, "data"))
+const CACHE_DIR = joinpath(DATA_DIR, "cache")
+const FP_PATH   = joinpath(DATA_DIR, "fingerprints.json")
+const ENG_FILE  = "electa-2025-120-1-113.sbd"
+const SCI_FILE  = "electa-2025-120-1-141.tbd"
+
+const HAS_REFERENCE = isfile(FP_PATH) &&
+                      isfile(joinpath(DATA_DIR, ENG_FILE)) &&
+                      isfile(joinpath(DATA_DIR, SCI_FILE)) &&
+                      isdir(CACHE_DIR)
+
+HAS_REFERENCE || @info """
+    Real-file tests SKIPPED: no fixture found at $DATA_DIR.
+    Set SLOCUMIO_TEST_DATA to a directory containing the data files, a
+    cache/ subdirectory, and fingerprints.json. Unit tests still run.
+    """
+
+"""First 16 hex chars of the SHA-256 over the raw float64 bytes — the same
+byte-level fingerprint `tools/julia_reference.py` emits."""
+sha16(v::Vector{Float64}) = bytes2hex(sha256(reinterpret(UInt8, v)))[1:16]
 
 @testset "SlocumIO.jl" begin
 
@@ -147,6 +169,13 @@ end
     cands = candidate_cachedirs("/foo/bar")
     @test "/foo/bar" in cands
     @test default_cachedir() in cands
+    # Documented order: user dir, ./cache, <datadir>/cache, <datadir>, platform default
+    with_data = candidate_cachedirs("/foo/bar", "/data/glider/00010000.dbd")
+    @test with_data[1] == "/foo/bar"
+    @test with_data[2] == joinpath(pwd(), "cache")
+    @test with_data[3] == joinpath("/data/glider", "cache")
+    @test with_data[4] == "/data/glider"
+    @test with_data[end] == default_cachedir()   # platform default is LAST
 end
 
 @testset "TimeSeries iteration" begin
@@ -156,192 +185,313 @@ end
     @test collect(ts) == [(1.0, 10.0), (2.0, 20.0), (3.0, 30.0)]
 end
 
-# ── Integration tests with real files (only if available) ────────────────────
+# ── Regression tests: one per bug fixed ──────────────────────────────────────
+
+@testset "regression: asctime pads single-digit day (fileopen_time)" begin
+    # Slocum writes C asctime, which space-pads days 1-9. After the dockserver
+    # maps spaces to underscores that leaves an EMPTY field:
+    #   "Fri_May__2_11:57:20_2025" -> ["Fri","May","","2","11:57:20","2025"]
+    # Splitting with keepempty=true made every such file parse as NaN.
+    t1 = parse_fileopen_time("Fri_May__2_11:57:20_2025")
+    @test !isnan(t1)
+    @test Dates.unix2datetime(t1) == Dates.DateTime(2025, 5, 2, 11, 57, 20)
+    t2 = parse_fileopen_time("Thu_May__8_04:22:10_2025")
+    @test Dates.unix2datetime(t2) == Dates.DateTime(2025, 5, 8, 4, 22, 10)
+    # Two-digit days must keep working
+    @test Dates.unix2datetime(parse_fileopen_time("Sun_Jul_21_23:00:36_2024")) ==
+          Dates.DateTime(2024, 7, 21, 23, 0, 36)
+end
+
+@testset "regression: sort key survives wide mission/segment fields" begin
+    # Packing into one integer gave the segment only 3 digits, so segment>=1000
+    # overflowed into the mission field and produced identical keys.
+    @test _slocum_sort_key("gl-2024-100-1-0.dbd") != _slocum_sort_key("gl-2024-100-0-1000.dbd")
+    f = ["gl-2024-100-1-999.dbd", "gl-2024-100-1-1000.dbd",
+         "gl-2024-100-2-0.dbd",   "gl-2024-100-1-1001.dbd"]
+    sort_slocum!(f)
+    @test f == ["gl-2024-100-1-999.dbd", "gl-2024-100-1-1000.dbd",
+                "gl-2024-100-1-1001.dbd", "gl-2024-100-2-0.dbd"]
+    # mission >= 100 must not bleed into the day-of-year field
+    g = ["gl-2024-101-0-0.dbd", "gl-2024-100-100-0.dbd"]
+    sort_slocum!(g)
+    @test g == ["gl-2024-100-100-0.dbd", "gl-2024-101-0-0.dbd"]
+end
+
+@testset "regression: find_paired_file handles bare relative names" begin
+    # dirname("a.dbd") == "" and isdir("") is false, so the file's own
+    # directory used to be skipped entirely.
+    mktempdir() do dir
+        cd(dir) do
+            touch("00010000.dbd"); touch("00010000.ebd")
+            p = find_paired_file("00010000.dbd")
+            @test p !== nothing
+            @test basename(p) == "00010000.ebd"
+        end
+    end
+end
+
+@testset "regression: glob escapes regex metacharacters" begin
+    mktempdir() do dir
+        for n in ("a+b.dbd", "aab.dbd", "ab.dbd"); touch(joinpath(dir, n)); end
+        # '+' used to be a regex quantifier: matched aab/ab, missed the literal.
+        @test basename.(glob_files(joinpath(dir, "a+b.dbd"))) == ["a+b.dbd"]
+        @test sort(basename.(glob_files(joinpath(dir, "a*.dbd")))) ==
+              ["a+b.dbd", "aab.dbd", "ab.dbd"]
+        # character classes must still work
+        touch(joinpath(dir, "x.sbd")); touch(joinpath(dir, "x.tbd"))
+        @test sort(basename.(glob_files(joinpath(dir, "*.[sStT][bB][dD]")))) ==
+              ["x.sbd", "x.tbd"]
+    end
+end
+
+@testset "regression: state buffer is cleared between cycles" begin
+    # `states` is reused across cycles and only 4*nsb entries get written, so
+    # without an explicit clear the tail held the PREVIOUS cycle's states.
+    states = Vector{UInt8}(undef, 8)
+    fill!(states, 0xFF)                       # simulate stale prior content
+    decode_state_bytes!(states, IOBuffer([0xAA]), 1, 8)   # only 4 sensors covered
+    @test states[1:4] == fill(SlocumIO.UPDATED, 4)
+    @test states[5:8] == fill(SlocumIO.NOTSET, 4)
+end
+
+@testset "regression: interp_fn Dict is keyed by input-series index" begin
+    # The key indexes `series`, NOT the returned tuple: series[2] comes back
+    # as out[3]. The docs previously showed Dict(3 => heading_interp) for a
+    # 2-parameter call, which silently matched nothing.
+    marker(t, ts, vs) = fill(-999.0, length(t))
+    s = [TimeSeries([1.0, 2.0, 3.0], [1.0, 2.0, 3.0]),
+         TimeSeries([1.0, 2.0, 3.0], [10.0, 20.0, 30.0]),
+         TimeSeries([1.0, 2.0, 3.0], [100.0, 200.0, 300.0])]
+    out = SlocumIO.get_sync(s; interp_fn = Dict(2 => marker))
+    @test out[3] == fill(-999.0, 3)      # series[2] -> out[3], customised
+    @test out[4] ≈ [100.0, 200.0, 300.0] # series[3] -> out[4], default interp
+    # A key past the end is ignored rather than erroring.
+    out2 = SlocumIO.get_sync(s; interp_fn = Dict(9 => marker))
+    @test !any(==(-999.0), out2[3])
+end
+
+@testset "regression: linear_interp needs an ascending base" begin
+    # Documents the precondition that MultiDBD.get_data now guarantees by
+    # sorting its eng+sci merge: an unsorted base silently extrapolates.
+    t_src = [1.0, 2.0, 3.0, 4.0, 5.0]
+    v_src = [0.0, 1.0, 4.0, 9.0, 16.0]        # non-linear, so errors show
+    @test linear_interp([1.5, 2.5, 4.5], t_src, v_src) ≈ [0.5, 2.5, 12.5]
+end
+
+# ── Integration tests against real glider files ──────────────────────────────
 
 if HAS_REFERENCE
     using JSON
 
+    eng_path = joinpath(DATA_DIR, ENG_FILE)
+    sci_path = joinpath(DATA_DIR, SCI_FILE)
+
     @testset "Real-file: header parsing" begin
-        path = "/mnt/user-data/uploads/02010000.sbd"
-        dbd = open_dbd(path; cachedir="/tmp/cache")
-        @test dbd.header.encoding_ver == 5
-        @test dbd.header.sensors_per_cycle == 64
-        @test dbd.header.state_bytes_per_cycle == 16
-        @test dbd.header.sensor_list_crc == "0f682cb2"
-        @test dbd.header.sensor_list_factored == 1
-        @test dbd.header.total_num_sensors == 2709
-        @test dbd.header.mission_name == "electa.mi"
-        @test length(dbd.sensors) == 64
-        @test dbd.time_var_name == "m_present_time"
-        @test has_parameter(dbd, "m_depth")
-        @test has_parameter(dbd, "m_gps_lat")
-        @test !has_parameter(dbd, "bogus_sensor_name")
+        eng = open_dbd(eng_path; cachedir=CACHE_DIR)
+        @test eng.header.encoding_ver == 5
+        @test eng.header.sensors_per_cycle == 64
+        @test eng.header.state_bytes_per_cycle == 16
+        @test eng.header.sensor_list_crc == "0f682cb2"
+        @test eng.header.sensor_list_factored == 1
+        @test eng.header.total_num_sensors == 2709
+        @test eng.header.mission_name == "electash.mi"
+        @test length(eng.sensors) == 64
+        @test eng.time_var_name == "m_present_time"
+        @test has_parameter(eng, "m_depth")
+        @test has_parameter(eng, "m_gps_lat")
+        @test !has_parameter(eng, "bogus_sensor_name")
+        # full namespace is retained alongside the active cycle sensors
+        @test length(eng.all_sensor_names) == 2709
+        @test "m_depth" in eng.all_sensor_names
+
+        sci = open_dbd(sci_path; cachedir=CACHE_DIR)
+        @test sci.header.sensors_per_cycle == 14
+        @test sci.header.state_bytes_per_cycle == 4
+        @test sci.time_var_name == "sci_m_present_time"
+        @test has_parameter(sci, "sci_water_temp")
+
+        # fileopen_time must parse (these files use asctime's padded day)
+        @test !isnan(parse_fileopen_time(eng.header.fileopen_time))
+        @test !isnan(parse_fileopen_time(sci.header.fileopen_time))
     end
 
-    @testset "Real-file: binary reading vs reference (electa)" begin
-        ref = JSON.parsefile(joinpath(@__DIR__, "reference_fingerprints.json"))
+    @testset "Real-file: SHA-256 fingerprints" begin
+        ref = JSON.parsefile(FP_PATH)
         cases = [
-            ("/mnt/user-data/uploads/02010000.dbd",
-                ["m_depth", "m_heading", "m_pitch", "m_roll", "m_battery"]),
-            ("/mnt/user-data/uploads/02010000.sbd",
-                ["m_depth"]),
-            ("/mnt/user-data/uploads/02010000.mbd",
-                ["m_depth", "m_heading", "m_pitch", "m_roll"]),
-            ("/mnt/user-data/uploads/02010000.ebd",
-                ["sci_water_temp", "sci_water_cond", "sci_water_pressure"]),
-            ("/mnt/user-data/uploads/02010000.tbd",
-                ["sci_water_temp", "sci_water_cond", "sci_water_pressure"]),
+            (ENG_FILE, ["m_present_time", "m_depth", "m_gps_lat", "m_gps_lon",
+                        "m_heading", "m_pitch", "m_roll", "m_battery"]),
+            (SCI_FILE, ["sci_m_present_time", "sci_water_temp",
+                        "sci_water_cond", "sci_water_pressure"]),
         ]
-        for (path, params) in cases
-            dbd = open_dbd(path; cachedir="/tmp/cache")
-            r = get_data(dbd, params...)
+        for (fname, params) in cases
+            dbd = open_dbd(joinpath(DATA_DIR, fname); cachedir=CACHE_DIR)
+            # Raw values: the fingerprints are over undecorated reader output.
+            r = get_data(dbd, params...; decimal_latlon=false, discard_bad_latlon=false)
             r isa TimeSeries && (r = [r])
-            file_ref = ref[basename(path)]["params"]
+            file_ref = ref[fname]["params"]
             for (i, p) in pairs(params)
                 expect = file_ref[p]["value"]
                 @test length(r[i]) == expect["n"]
+                # Byte-level equality, not just min/max agreement.
+                @test sha16(r[i].value) == expect["sha256"]
+                @test sha16(r[i].time)  == file_ref[p]["time"]["sha256"]
                 if expect["n"] > 0
                     finite = filter(isfinite, r[i].value)
-                    @test minimum(finite) ≈ expect["min"] rtol=1e-9
-                    @test maximum(finite) ≈ expect["max"] rtol=1e-9
+                    if !isempty(finite)
+                        @test minimum(finite) ≈ expect["min"] rtol=1e-9
+                        @test maximum(finite) ≈ expect["max"] rtol=1e-9
+                    end
                 end
             end
         end
     end
 
-    @testset "Real-file: binary reading vs reference (sylvia)" begin
-        ref = JSON.parsefile(joinpath(@__DIR__, "reference_fingerprints.json"))
-        cases = [
-            ("/mnt/user-data/uploads/02390000.DBD",
-                ["m_depth", "m_heading", "m_pitch", "m_roll", "m_battery"]),
-            ("/mnt/user-data/uploads/02390000.SBD",
-                ["m_depth"]),
-            ("/mnt/user-data/uploads/02390000.MBD",
-                ["m_depth", "m_pitch", "m_heading"]),
-            ("/mnt/user-data/uploads/02390000.TBD",
-                ["sci_water_temp", "sci_water_cond", "sci_water_pressure"]),
-        ]
-        for (path, params) in cases
-            dbd = open_dbd(path; cachedir="/tmp/cache")
-            r = get_data(dbd, params...)
-            r isa TimeSeries && (r = [r])
-            file_ref = ref[basename(path)]["params"]
-            for (i, p) in pairs(params)
-                expect = file_ref[p]["value"]
-                @test length(r[i]) == expect["n"]
-                if expect["n"] > 0
-                    finite = filter(isfinite, r[i].value)
-                    @test minimum(finite) ≈ expect["min"] rtol=1e-9
-                    @test maximum(finite) ≈ expect["max"] rtol=1e-9
-                end
-            end
-        end
+    @testset "Real-file: final cycle is not dropped" begin
+        # The separator byte delimits cycles rather than terminating them, so
+        # a file ends `state_bytes | chunk` with no trailing separator.
+        # Demanding the separator discarded the last complete cycle of EVERY
+        # file. Verify the reader consumes the file right up to its last byte.
+        dbd = open_dbd(sci_path; cachedir=CACHE_DIR)
+        ts = get_data(dbd, "sci_water_temp")
+        @test length(ts) == 871          # 870 before the fix
+        tt = get_data(dbd, "sci_m_present_time")
+        @test length(tt) == 967
     end
 
-    @testset "Real-file: NMEA conversion validates" begin
-        dbd = open_dbd("/mnt/user-data/uploads/02010000.sbd"; cachedir="/tmp/cache")
-        # Raw NMEA
-        ts_raw = get_data(dbd, "m_gps_lat"; decimal_latlon=false, discard_bad_latlon=false)
-        @test length(ts_raw) == 19
-        @test all(v -> 3850 < v < 3900, ts_raw.value)   # NMEA degrees×100
-        # Decimal
-        ts_dec = get_data(dbd, "m_gps_lat")
-        @test all(v -> 38 < v < 40, ts_dec.value)        # decimal degrees
+    @testset "Real-file: NMEA conversion" begin
+        dbd = open_dbd(eng_path; cachedir=CACHE_DIR)
+        raw = get_data(dbd, "m_gps_lat"; decimal_latlon=false, discard_bad_latlon=false)
+        @test length(raw) == 25
+        @test all(v -> 3800 < v < 3900, raw.value)      # NMEA degrees×100
+        dec = get_data(dbd, "m_gps_lat")
+        @test all(v -> 38 < v < 39, dec.value)          # decimal degrees
+        # 3841.174 -> 38 + 41.174/60
+        @test minimum(dec.value) ≈ 38.68623 atol=1e-4
     end
 
     @testset "Real-file: get_sync" begin
-        dbd = open_dbd("/mnt/user-data/uploads/02010000.dbd"; cachedir="/tmp/cache")
+        dbd = open_dbd(eng_path; cachedir=CACHE_DIR)
         t, dep, hdg = get_sync(dbd, "m_depth", "m_heading")
-        @test length(t) == length(dep)
-        @test length(t) == length(hdg)
-        # m_heading interpolated from sparser time base: NaNs only at edges if any
-        @test sum(isfinite, hdg) > 100
+        @test length(t) == length(dep) == length(hdg)
+        @test issorted(t)
+        @test any(isfinite, hdg)
     end
 
-    @testset "Real-file: MultiDBD" begin
-        # Use just the electa engineering files we have caches for
-        m = MultiDBD(filenames=["/mnt/user-data/uploads/02010000.dbd",
-                                "/mnt/user-data/uploads/02010000.sbd"];
-                     cachedir="/tmp/cache")
+    @testset "Real-file: MultiDBD across eng + sci" begin
+        m = MultiDBD(filenames=[eng_path, sci_path]; cachedir=CACHE_DIR)
         @test nfiles(m) == 2
+        @test length(m.files_eng) == 1
+        @test length(m.files_sci) == 1
         @test "m_depth" in parameter_names(m, :eng)
-        ts = get_data(m, "m_depth")
-        # DBD has 2881 + SBD has 1 = 2882 m_depth values (concat eng→eng)
-        @test length(ts) == 2882
+        @test "sci_water_temp" in parameter_names(m, :sci)
+        @test has_parameter(m, "m_depth")
+        @test has_parameter(m, "sci_water_temp")
+        # time_range is populated (it silently wasn't, before the asctime fix)
+        tmin, tmax = m.time_range
+        @test isfinite(tmin) && isfinite(tmax)
+        @test tmin <= tmax
+
+        ts = get_data(m, "sci_water_temp")
+        @test length(ts) == 871
+        t, temp, pres = get_sync(m, "sci_water_temp", "sci_water_pressure")
+        @test length(t) == length(temp) == length(pres)
+        @test sum(isfinite, pres) > 0
     end
 
-    @testset "Real-file: MultiDBD with eng_dir/sci_dir (split directories)" begin
-        # Validates the multi-directory file-selection logic against a
-        # realistic split-directory layout populated outside the test.
-        eng_dir = "/tmp/split_test/eng"
-        sci_dir = "/tmp/split_test/sci"
-        cache   = "/tmp/cache"
-        if isdir(eng_dir) && isdir(sci_dir)
+    @testset "Real-file: mission filtering is case-insensitive" begin
+        @test nfiles(MultiDBD(filenames=[eng_path]; cachedir=CACHE_DIR,
+                              missions=["ELECTASH.MI"])) == 1
+        @test nfiles(MultiDBD(filenames=[eng_path]; cachedir=CACHE_DIR,
+                              missions=["electash.mi"])) == 1
+        # a banned mission excludes everything -> constructor errors
+        @test_throws ErrorException MultiDBD(filenames=[eng_path]; cachedir=CACHE_DIR,
+                                            banned_missions=["ELECTASH.MI"])
+    end
 
-            # 1) eng_dir alone: only engineering files
-            m = MultiDBD(eng_dir=eng_dir, cachedir=cache)
-            @test length(m.files_eng) == 6
+    @testset "Real-file: split eng_dir/sci_dir layout" begin
+        # Build a realistic split-directory archive from the fixture. The files
+        # are renamed to share a stem so eng<->sci pairing can be exercised;
+        # the cache is located by the CRC in the header, which renaming
+        # does not affect.
+        mktempdir() do root
+            eng_dir = joinpath(root, "from-glider")
+            sci_dir = joinpath(root, "from-science")
+            mkpath(eng_dir); mkpath(sci_dir)
+            cp(eng_path, joinpath(eng_dir, "glider-2025-120-1-1.sbd"))
+            cp(sci_path, joinpath(sci_dir, "glider-2025-120-1-1.tbd"))
+
+            m = MultiDBD(eng_dir=eng_dir, sci_dir=sci_dir, cachedir=CACHE_DIR)
+            @test length(m.files_eng) == 1
+            @test length(m.files_sci) == 1
+
+            # eng_dir alone sees only the engineering file
+            m = MultiDBD(eng_dir=eng_dir, cachedir=CACHE_DIR)
+            @test length(m.files_eng) == 1
             @test length(m.files_sci) == 0
-            @test "m_depth" in parameter_names(m, :eng)
 
-            # 2) sci_dir alone: only science files
-            m = MultiDBD(sci_dir=sci_dir, cachedir=cache)
-            @test length(m.files_eng) == 0
-            @test length(m.files_sci) == 4
-            @test "sci_water_temp" in parameter_names(m, :sci)
+            # the sibling is findable across directories
+            p = find_paired_file(joinpath(eng_dir, "glider-2025-120-1-1.sbd"), [sci_dir])
+            @test p == joinpath(sci_dir, "glider-2025-120-1-1.tbd")
 
-            # 3) Both: union — 6 eng + 4 sci
-            m = MultiDBD(eng_dir=eng_dir, sci_dir=sci_dir, cachedir=cache)
-            @test length(m.files_eng) == 6
-            @test length(m.files_sci) == 4
+            # complement_files pulls the sci partner in from the other directory
+            m = MultiDBD(filenames=[joinpath(eng_dir, "glider-2025-120-1-1.sbd")],
+                         sci_dir=sci_dir, cachedir=CACHE_DIR, complement_files=true)
+            @test length(m.files_eng) == 1
+            @test length(m.files_sci) == 1
 
-            # 4) complemented_files_only with both dirs: drops MBDs (no partner),
-            #    keeps DBD/SBD/TBD/EBD pairs => 4 eng + 4 sci
-            m = MultiDBD(eng_dir=eng_dir, sci_dir=sci_dir, cachedir=cache,
-                         complemented_files_only=true)
-            @test length(m.files_eng) == 4
-            @test length(m.files_sci) == 4
-
-            # 5) Restrict to DBD+EBD pairs only via patterns
-            m = MultiDBD(eng_dir=eng_dir, sci_dir=sci_dir, cachedir=cache,
-                         eng_pattern="*.[dD][bB][dD]",
-                         sci_pattern="*.[eE][bB][dD]",
-                         complemented_files_only=true)
-            @test length(m.files_eng) == 2
-            @test length(m.files_sci) == 2
-
-            # 6) End-to-end: sync science onto engineering from separate dirs
-            m = MultiDBD(eng_dir=eng_dir, sci_dir=sci_dir, cachedir=cache,
-                         eng_pattern="*.[dD][bB][dD]",
-                         sci_pattern="*.[eE][bB][dD]")
-            t, depth, temp = get_sync(m, "m_depth", "sci_water_temp")
-            @test length(t) == length(depth) == length(temp)
-            @test sum(isfinite, temp) > 0   # at least some non-NaN after interp
+            # cross-source sync from separate directories
+            m = MultiDBD(eng_dir=eng_dir, sci_dir=sci_dir, cachedir=CACHE_DIR)
+            t, temp, depth = get_sync(m, "sci_water_temp", "m_depth")
+            @test length(t) == length(temp) == length(depth)
+            @test issorted(t)
         end
     end
 
-    @testset "find_paired_file: case fallback across directories" begin
-        eng_dir = "/tmp/split_test/eng"
-        sci_dir = "/tmp/split_test/sci"
-        if isdir(eng_dir) && isdir(sci_dir)
-            # Uppercase input, finds uppercase sibling in sci_dir
-            p = SlocumIO.find_paired_file(joinpath(eng_dir, "02390000.DBD"),
-                                              [sci_dir])
-            @test p == joinpath(sci_dir, "02390000.EBD")
+    @testset "Real-file: LZ4-compressed .ccc cache" begin
+        ccc = filter(f -> endswith(f, ".ccc"), readdir(CACHE_DIR, join=true))
+        if isempty(ccc)
+            @info "no .ccc fixture present; skipping compressed-cache test"
+        else
+            text = read_cache_file(first(ccc))
+            @test !isempty(text)
+            lines = split(text, '\n'; keepempty=false)
+            @test length(lines) > 10
+            @test startswith(first(lines), "s:")
+            # It must parse as a real sensor list.
+            sensors, all_names = parse_sensor_list(text, length(lines))
+            @test !isempty(sensors)
+            @test length(all_names) == length(lines)
+        end
+    end
 
-            # Lowercase input, finds lowercase sibling
-            p = SlocumIO.find_paired_file(joinpath(eng_dir, "02010000.dbd"),
-                                              [sci_dir])
-            @test p == joinpath(sci_dir, "02010000.ebd")
-
-            # MBD: no sibling EBD in sci/, no MBD-pair in eng/ — should be nothing
-            p = SlocumIO.find_paired_file(joinpath(eng_dir, "02010000.mbd"),
-                                              [sci_dir])
-            @test p === nothing    # no .nbd exists
+    @testset "Real-file: cache lookup falls back to the data directory" begin
+        # With no cachedir given, the cache next to the data file must be found
+        # (documented step 3), and the error must name every directory tried.
+        mktempdir() do dir
+            cp(eng_path, joinpath(dir, ENG_FILE))
+            mkpath(joinpath(dir, "cache"))
+            cp(joinpath(CACHE_DIR, "0f682cb2.cac"), joinpath(dir, "cache", "0f682cb2.cac"))
+            dbd = open_dbd(joinpath(dir, ENG_FILE))       # no cachedir kwarg
+            @test length(dbd.sensors) == 64
+        end
+        mktempdir() do dir
+            cp(eng_path, joinpath(dir, ENG_FILE))          # no cache anywhere
+            err = try
+                open_dbd(joinpath(dir, ENG_FILE); cachedir=joinpath(dir, "nope"))
+                nothing
+            catch e
+                sprint(showerror, e)
+            end
+            @test err !== nothing
+            @test occursin("0f682cb2", err)
+            @test occursin(joinpath(dir, "nope"), err)     # user dir listed
+            @test occursin(dir, err)                       # data dir listed too
         end
     end
 end
 
 end  # outer testset
 
-println("\nAll tests passed", HAS_REFERENCE ? " (including real-file validation)." : " (unit-only — no reference data found).")
+println("\nAll tests passed",
+        HAS_REFERENCE ? " (including real-file validation)." :
+                        " (unit-only — no fixture found).")

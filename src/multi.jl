@@ -9,8 +9,11 @@ order.
 Key differences from `dbdreader.MultiDBD`:
 - No global state mutation.
 - File pairing (eng↔sci) is explicit and lazy.
-- Time-limit filtering is applied at read time, not on metadata-only.
 - Missing files do not exit the process; they are skipped with a warning.
+
+Note there is no time-limit filtering: `MultiDBD` reads every file it opens.
+The `time_range` field reports the span covered by the files' `fileopen_time`
+headers and is informational only (see [`Base.show`](@ref)).
 """
 
 # ── Filename sorting (handles Slocum's `name-YYYY-DDD-S-FFFF.ext` format) ────
@@ -19,18 +22,27 @@ const _DBD_FILENAME_RE = r"-(\d+)-(\d+)-(\d+)-(\d+)\.[a-zA-Z]{3}$"
 
 """
 Compute a sort key for Slocum filenames such that chronological order is
-preserved.  Handles both `name-YYYY-DDD-S-FFFF.ext` and 8x3 `NNNNNNNN.ext`
-forms; the latter sorts lexicographically.
+preserved.  Handles both `name-YYYY-DDD-M-S.ext` (year, day-of-year, mission,
+segment) and 8x3 `NNNNNNNN.ext` forms; the latter sorts lexicographically.
+
+The four numeric fields are kept as separate tuple elements rather than
+packed into one integer.  Packing (`yyyy*10^8 + ddd*10^5 + m*10^3 + s`)
+allotted only three digits to the mission field and three to the segment
+field, so a segment ≥ 1000 overflowed into the mission field and a mission
+≥ 100 into the day-of-year field — distinct files could collide on an
+identical key and sort out of chronological order.  Slocum segment counters
+routinely pass 999 on multi-week deployments.  Julia compares tuples
+lexicographically, which gives the same ordering with no width limits.
 """
 function _slocum_sort_key(filename::AbstractString)
     m = match(_DBD_FILENAME_RE, filename)
     if m !== nothing
-        nums = parse.(Int, m.captures)
+        yyyy, ddd, mission, segment = parse.(Int, m.captures)
         base = filename[1:m.offset-1]
         ext = lowercase(splitext(filename)[2])
-        return (base, nums[1]*10^8 + nums[2]*10^5 + nums[3]*10^3 + nums[4], ext)
+        return (base, yyyy, ddd, mission, segment, ext)
     else
-        return (lowercase(filename), 0, "")
+        return (lowercase(filename), 0, 0, 0, 0, "")
     end
 end
 
@@ -41,24 +53,34 @@ sort_slocum!(filenames::AbstractVector) = sort!(filenames; by=_slocum_sort_key)
 """
 Expand a glob-like pattern (`*`, `?`, character classes) into a sorted list
 of matching paths.  Uses Julia's stdlib only; no Glob.jl dependency.
+
+Only the basename is treated as a pattern; the directory part is used
+literally.  Every character that is not a glob operator is regex-escaped —
+without that, a filename containing `+`, `(`, `\$` and friends would either
+match the wrong files or raise a regex parse error.
 """
 function glob_files(pattern::AbstractString)::Vector{String}
     dir = dirname(pattern)
     base = basename(pattern)
     isempty(dir) && (dir = ".")
     isdir(dir) || return String[]
-    # Translate glob to regex
+    # Translate glob to regex, escaping everything that isn't a glob operator.
     re_buf = IOBuffer()
+    in_class = false
     for c in base
-        if c == '*'
+        if in_class
+            write(re_buf, c)
+            c == ']' && (in_class = false)
+        elseif c == '*'
             write(re_buf, ".*")
         elseif c == '?'
             write(re_buf, '.')
-        elseif c == '.'
-            write(re_buf, "\\.")
-        elseif c == '[' || c == ']'
+        elseif c == '['
             write(re_buf, c)
+            in_class = true
         else
+            # Escape any regex metacharacter, including '.', '+', '(', '$', '\'.
+            occursin(r"[^\w\s-]", string(c)) && write(re_buf, '\\')
             write(re_buf, c)
         end
     end
@@ -118,7 +140,11 @@ function find_paired_file(fn::AbstractString,
     end
 
     # Search the file's own directory first, then user-supplied additional dirs.
-    candidate_dirs = String[String(dirname(fn))]
+    # `dirname` returns "" for a bare relative name, and `isdir("")` is false —
+    # normalise to "." so the sibling next to a cwd-relative file is still found.
+    own_dir = String(dirname(fn))
+    isempty(own_dir) && (own_dir = ".")
+    candidate_dirs = String[own_dir]
     for d in search_dirs
         d in candidate_dirs || push!(candidate_dirs, String(d))
     end
@@ -296,6 +322,12 @@ function MultiDBD(; filenames::Union{Nothing,Vector{<:AbstractString}}=nothing,
     tmin = Inf
     tmax = -Inf
 
+    # Mission filtering is case-insensitive: fold BOTH the header value and the
+    # caller's lists, otherwise a list like ["STATUS.MI"] never matches the
+    # lowercased header value and the filter silently does nothing.
+    banned_lc = Set(lowercase.(banned_missions))
+    keep_lc   = Set(lowercase.(missions))
+
     for f in fns
         local dbd::DBDFile
         try
@@ -305,8 +337,8 @@ function MultiDBD(; filenames::Union{Nothing,Vector{<:AbstractString}}=nothing,
             continue
         end
         mname = lowercase(dbd.header.mission_name)
-        mname in banned_missions && (continue)
-        !isempty(missions) && !(mname in missions) && (continue)
+        mname in banned_lc && (continue)
+        !isempty(keep_lc) && !(mname in keep_lc) && (continue)
         mname in miss || push!(miss, mname)
         if is_science_file(f)
             push!(sci, dbd)
@@ -326,7 +358,14 @@ function MultiDBD(; filenames::Union{Nothing,Vector{<:AbstractString}}=nothing,
         end
     end
 
-    isempty(eng) && isempty(sci) && error("MultiDBD: no files could be opened.")
+    if isempty(eng) && isempty(sci)
+        if !isempty(banned_lc) || !isempty(keep_lc)
+            error("MultiDBD: all $(length(fns)) candidate file(s) were excluded by the " *
+                  "mission filter (missions=$missions, banned_missions=$banned_missions). " *
+                  "Mission matching is case-insensitive against the file's `mission_name` header.")
+        end
+        error("MultiDBD: no files could be opened (tried $(length(fns))).")
+    end
 
     return MultiDBD(eng, sci, cachedir === nothing ? nothing : String(cachedir),
                     miss, names_eng, names_sci,
@@ -381,7 +420,9 @@ time bases).  Returns a single `TimeSeries` for one parameter, or a
 - `decimal_latlon::Bool=true`        — convert NMEA coords to decimal degrees.
 - `discard_bad_latlon::Bool=true`    — drop invalid NMEA values (incl. minutes ≥ 60).
 - `return_nans::Bool=false`          — emit NaN for NOTSET cycles.
-- `max_values::Int=-1`               — limit emitted rows per parameter.
+- `max_values::Int=-1`               — cap on emitted rows **per file**, not per
+  parameter: reading N files can therefore yield up to `N * max_values` rows.
+  Use it as a cheap early-exit when sampling, not as a total-row limit.
 """
 function get_data(m::MultiDBD, params::AbstractString...;
                   decimal_latlon::Bool=true,
@@ -410,7 +451,14 @@ function get_data(m::MultiDBD, params::AbstractString...;
         elseif isempty(s)
             ts = e
         else
-            ts = TimeSeries(vcat(e.time, s.time), vcat(e.value, s.value))
+            # A parameter present in BOTH the engineering and science files
+            # would otherwise come back as all-eng-then-all-sci, which is not
+            # chronological.  `get_sync`/`linear_interp` require an ascending
+            # time base, so sort the merge here.
+            t = vcat(e.time, s.time)
+            v = vcat(e.value, s.value)
+            p = sortperm(t)
+            ts = TimeSeries(t[p], v[p])
         end
         # NMEA handling
         if is_latlon_param(params_vec[i]) && !isempty(ts)
@@ -435,7 +483,8 @@ Read multiple parameters and interpolate onto the time base of the first.
 Returns `(t, v1, v2, ..., vN)`.
 
 `interp_fn` can be `linear_interp` (default), `heading_interp`, or a
-`Dict{Int,Function}` mapping series index (2-based) to a custom interpolator.
+`Dict{Int,Function}` keyed by the position of the parameter in the argument
+list (keys start at 2 — the first parameter supplies the time base).
 """
 function get_sync(m::MultiDBD, params::AbstractString...;
                   interp_fn = linear_interp,

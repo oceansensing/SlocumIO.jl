@@ -100,6 +100,8 @@ decompressed in-memory at open time.
 4. `<datafile_dir>` itself
 5. Platform default ([`default_cachedir`](@ref))
 
+If no cache matches, the error names every directory that was searched.
+
 # Errors
 - Throws `SystemError` if `filename` is missing.
 - Throws `ErrorException` with the searched paths if no matching `.cac` is found.
@@ -139,8 +141,8 @@ function open_dbd(filename::AbstractString;
     if header.sensor_list_factored == 1
         cac_path = find_cache_file(header.sensor_list_crc, cachedir, String(filename))
         cac_path === nothing && error(
-            "Cache file $(header.sensor_list_crc).cac not found in any of: " *
-            join(candidate_cachedirs(cachedir), ", ")
+            "Cache file $(header.sensor_list_crc).cac (or .ccc) not found. Searched:\n  " *
+            join(candidate_cachedirs(cachedir, String(filename)), "\n  ")
         )
         sensors, all_names = parse_sensor_list(read_cache_file(cac_path),
                                                 header.total_num_sensors)
@@ -175,7 +177,7 @@ function open_dbd(filename::AbstractString;
 
     return DBDFile(
         String(filename), header, sensors, name_to_pos, bytesizes,
-        binary_offset, time_var, time_pos, raw,
+        binary_offset, time_var, time_pos, raw, all_names,
     )
 end
 
@@ -237,14 +239,16 @@ Returns `(t, v1, v2, ..., vN)` where `t == series[1].time` and each `v_i`
 is the corresponding parameter interpolated onto `t`.
 
 `interp_fn` may be a function (e.g., [`linear_interp`](@ref) or
-[`heading_interp`](@ref)) or a `Dict{Int,Function}` mapping 1-based series
-index (starting from 2 for the first interpolated series) to a custom
-interpolator.
+[`heading_interp`](@ref)) or a `Dict{Int,Function}` keyed by the **position of
+the parameter in the argument list**.  Keys start at 2, since the first
+parameter supplies the time base and is never interpolated.
 
 # Example
 ```julia
+# m_heading is the 2nd parameter, so it is key 2 — not 3, even though it
+# comes back as the 3rd element of the returned tuple.
 t, depth, hdg, pitch = get_sync(dbd, "m_depth", "m_heading", "m_pitch";
-                                interp_fn = Dict(3 => heading_interp))
+                                interp_fn = Dict(2 => heading_interp))
 ```
 """
 function get_sync(dbd::DBDFile, params::AbstractString...;

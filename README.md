@@ -8,7 +8,8 @@ This is a ground-up Julia translation of the Python [`dbdreader`](https://github
 
 ## Status
 
-Validated byte-for-byte against `dbdreader`'s output for real glider data files. All SHA-256 fingerprints of the result float64 arrays match exactly. See `test/reference_fingerprints.json` and the integration tests in `test/runtests.jl`.
+Every test run reads real glider files and compares SHA-256 fingerprints of the decoded float64
+arrays byte-for-byte. See [Validation](#validation) for exactly what is checked against what.
 
 ## Quick start
 
@@ -72,7 +73,6 @@ sci by extension at open time, regardless of which directory they came from.
 | `scipy` dependency | Required for `interp1d` | Built-in linear + heading interp |
 | Dead code | ~200 lines of unused Python reader | None |
 | Stale `fp` handle | Created at construction, used much later | Opened per call, closed cleanly |
-| Cycle reader bug | (none — the C extension is correct) | **N/A** (same algorithm, no separator bug) |
 
 ## File format reference (validated empirically)
 
@@ -90,12 +90,19 @@ After the ASCII header, the binary section consists of:
 Per data cycle:
   ─ state_bytes_per_cycle state bytes (2 bits/sensor, MSB first per byte)
   ─ chunk of sensor values (sum of bytesizes for UPDATED sensors, in cycle order)
-  ─ 1 separator byte
+  ─ 1 separator byte   ← between cycles only; absent after the last one
 ```
 
 State value encoding: `0 = NOTSET`, `1 = SAME` (use last value), `2 = UPDATED` (read new value).
 
 The single most easily-overlooked detail in porting this format is the **1-byte separator between cycles** (implicit in the C extension's `fp_current += chunksize + 1`).
+
+The second-most easily overlooked detail is that this separator **delimits cycles rather than
+terminating them**. A file ends `state_bytes | chunk`, with the last chunk's final byte being the
+last byte of the file — there is no trailing separator. A reader that requires `chunk + separator`
+to fit before accepting a cycle silently discards the last complete cycle of *every* file. Both
+fixture files exhibit this (`chunk_end == filesize` exactly), and the regression test
+`"Real-file: final cycle is not dropped"` pins the behaviour.
 
 ## Sensor list (cache) file format
 
@@ -117,7 +124,10 @@ Cache files (`.cac` plain, `.ccc` LZ4-compressed) are located by their CRC, in t
 4. `<datafile_dir>` itself.
 5. The platform-default directory ([`default_cachedir()`](src/cache.jl)).
 
-If no matching cache is found, the error message lists every directory that was searched.
+Both the lowercase and uppercase spellings of the CRC basename are tried in each
+directory, since dockserver case is inconsistent and that matters on
+case-sensitive filesystems. If no matching cache is found, the error message
+lists every directory that was searched.
 
 ## API
 
@@ -138,20 +148,39 @@ If no matching cache is found, the error message lists every directory that was 
 
 ## Validation
 
-The Julia algorithm was validated by:
+Two distinct things, with different provenance — worth keeping separate.
 
-1. Writing a Python twin (`tools/julia_reference.py`) that mirrors the Julia algorithm byte-for-byte.
-2. Running the twin against real glider files from **two gliders**:
-   - `electa`, deployment 2024-07-21 (`02010000.dbd/.sbd/.tbd`)
-   - `sylvia`, deployment 2024-09-30 (`02390000.DBD/.SBD/.MBD/.TBD`)
-3. Comparing SHA-256 fingerprints of the resulting float64 value arrays against `dbdreader`'s output.
+**1. Continuous (runs on every `Pkg.test()`).** A real fixture is committed to
+[`test/data/`](test/data): one `.sbd` and one `.tbd` from `electa`, MARACOOS deployment 2025-05,
+with their sensor-list caches and one LZ4-compressed `.ccc` cache. Twelve `(file, parameter)`
+combinations are checked, comparing **SHA-256 over the raw float64 bytes** of both the value and
+time arrays — byte-level equality, not just matching `n`/`min`/`max`. The expected fingerprints in
+`test/data/fingerprints.json` are produced by [`tools/julia_reference.py`](tools/julia_reference.py),
+an independent pure-Python implementation of the same algorithm, so agreement is a genuine
+cross-implementation check. It is *not* a dbdreader comparison.
 
-**All 45 validated `(file, parameter)` combinations match `dbdreader` exactly** — across both gliders and all five readable DBD-family file types (DBD, SBD, MBD, EBD, TBD). Reference fingerprints are stored in [`test/reference_fingerprints.json`](test/reference_fingerprints.json) and the integration tests in `test/runtests.jl` will check the Julia output against them when real files are present.
+To validate against your own archive instead:
+
+```bash
+SLOCUMIO_TEST_DATA=/path/to/your/files julia --project=. -e 'using Pkg; Pkg.test()'
+```
+
+The directory needs the data files, a `cache/` subdirectory, and a `fingerprints.json` — generate
+one with `python3 tools/julia_reference.py /path/to/your/files -o /path/to/your/files/fingerprints.json`.
+
+**2. Historical dbdreader comparison.** Earlier development compared 45 `(file, parameter)`
+combinations against `dbdreader`'s output across two gliders (`electa` 2024-07-21, `sylvia`
+2024-09-30) and all five readable file types (DBD, SBD, MBD, EBD, TBD); all matched exactly. Those
+fingerprints are preserved in
+[`test/reference_fingerprints.json`](test/reference_fingerprints.json) as a record. **They are not
+executed by the test suite** — the source files are not redistributable here, so the comparison
+cannot be re-run from this repository. Treat it as a documented past result rather than a
+continuously verified property.
 
 ## Installation
 
 ```julia
-] add https://github.com/yourorg/SlocumIO.jl
+] add https://github.com/oceansensing/SlocumIO.jl
 ```
 
 For development:
@@ -159,10 +188,6 @@ For development:
 ```julia
 ] dev /path/to/SlocumIO.jl
 ```
-
-## License
-
-The original `dbdreader` is GPL-3.0.  This is a clean-room reimplementation based on the documented Slocum binary format (and `dbdreader`'s public algorithm description), not a derivative work. Released under the MIT License (see `LICENSE`).
 
 ## Licensing and provenance
 

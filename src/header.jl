@@ -122,7 +122,10 @@ s:  F|T   full_idx   active_pos   bytesize   name   unit
 - Column 7: unit string (may be empty).
 
 The function also returns `all_names`, a vector of every sensor name in the
-file's namespace (active or not), in `full_idx` order, useful for `has_parameter`.
+file's namespace (active or not), in `full_idx` order.  `open_dbd` stores it
+as `DBDFile.all_sensor_names`.  Note `has_parameter` does *not* consult it:
+a namespace name that is inactive in this cycle would always read back empty,
+so membership there would be misleading.
 """
 function parse_sensor_list(text::AbstractString, total_num_sensors::Int)::Tuple{Vector{SensorInfo},Vector{String}}
     # First pass: gather all (active_pos, SensorInfo) pairs and all_names
@@ -189,6 +192,19 @@ Parse `fileopen_time` strings of the form `Sun_Jul_21_23:00:36_2024` into
 epoch seconds (UTC).  Returns `NaN` on failure (rather than throwing) so
 metadata queries on malformed files don't crash.
 
+Slocum writes this field in C `asctime` format, which **space-pads** a
+single-digit day of month.  Once the dockserver maps spaces to underscores
+that yields a doubled separator and an empty field:
+
+```
+Sun_Jul_21_23:00:36_2024   ->  ["Sun","Jul","21","23:00:36","2024"]
+Fri_May__2_11:57:20_2025   ->  ["Fri","May","","2","11:57:20","2025"]
+                                              ^^ empty
+```
+
+Splitting with `keepempty=false` collapses both forms to the same five
+fields, so days 1-9 parse identically to days 10-31.
+
 Locale-independent — we hand-parse the month abbreviation rather than
 relying on the C library's locale-sensitive parser.
 """
@@ -200,7 +216,9 @@ const MONTH_ABBR = Dict(
 function parse_fileopen_time(s::AbstractString)::Float64
     try
         # Format: DayName_Month_DD_HH:MM:SS_YYYY
-        parts = split(s, '_')
+        # `keepempty=false` absorbs the extra separator that asctime's
+        # space-padded single-digit day leaves behind (see docstring).
+        parts = split(s, '_'; keepempty=false)
         length(parts) >= 5 || return NaN
         # parts[1] = day name (ignored)
         # parts[2] = month abbr

@@ -10,8 +10,10 @@ indication of malformation.  This module catches that case.
 
 # Parameters that use NMEA encoding.  Slocum convention: any parameter whose
 # name ends in "_lat" or "_lon" and whose unit string in the cache file is
-# "lat" or "lon".  We hardcode the canonical list since most files have it
-# but also expose `is_latlon_param_by_unit` for unit-based detection.
+# "lat" or "lon".  We hardcode the canonical list, which covers every
+# lat/lon sensor observed in real files.  A sensor outside this list is read
+# as a plain float; pass `decimal_latlon=false` and convert it yourself with
+# `nmea_to_decimal` if you hit one.
 
 const LATLON_PARAMS = Set{String}([
     "m_lat", "m_lon", "c_wpt_lat", "c_wpt_lon",
@@ -34,16 +36,6 @@ const LATLON_PARAMS = Set{String}([
 Returns `true` if `name` is a known lat/lon parameter that uses NMEA encoding.
 """
 is_latlon_param(name::AbstractString) = name in LATLON_PARAMS
-
-"""
-    is_latlon_param(name, unit) -> Bool
-
-Detect lat/lon parameters using both the name and the unit string from the
-cache file (`unit == "lat"` or `unit == "lon"`).  More robust than the
-hardcoded list for non-standard parameter naming.
-"""
-is_latlon_param(name::AbstractString, unit::AbstractString) =
-    is_latlon_param(name) || lowercase(unit) in ("lat", "lon")
 
 """
     is_lat_param(name) -> Bool

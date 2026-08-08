@@ -87,9 +87,12 @@ the i-th series interpolated onto that time base (`v1 == series[1].value`).
 
 `interp_fn` may be:
 - A function (applied to all series after the first); or
-- A `Dict{Int,Function}` mapping series index (2-based) to a custom
-  interpolator, e.g., `Dict(3 => heading_interp)` to use heading
-  interpolation for the third series only.
+- A `Dict{Int,Function}` keyed by **index into `series`**, so `Dict(2 => f)`
+  applies `f` to `series[2]`.  Keys start at 2 because `series[1]` defines the
+  time base and is never interpolated.  Note this is the index of the *input*
+  series, which is one less than that value's position in the returned tuple
+  (`series[2]` comes back as `out[3]`, since `out[1]` is the time base).
+  Keys with no matching series are silently ignored.
 """
 function get_sync(series::AbstractVector{TimeSeries};
                   interp_fn = linear_interp)::Tuple

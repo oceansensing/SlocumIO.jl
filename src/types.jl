@@ -105,6 +105,17 @@ Represents an opened Slocum glider binary data file.  Construct via [`open_dbd`]
 - `time_var_name`  : `"m_present_time"` or `"sci_m_present_time"`
 - `time_pos`       : 1-based cycle position of the time variable
 - `decompressed`   : `Vector{UInt8}` if the file was compressed, else `nothing`
+- `all_sensor_names` : every sensor name in the file's *namespace*
+  (`total_num_sensors` entries), including those not active in this cycle
+
+# `sensors` vs `all_sensor_names`
+
+`sensors` holds only the sensors actually written in each cycle — those are
+the ones [`get_data`](@ref) can return.  `all_sensor_names` is the much
+larger namespace declared by the cache file (often a few thousand entries),
+useful for answering "does this glider know about sensor X at all?".
+[`has_parameter`](@ref) deliberately consults `sensors`, since a name that
+is in the namespace but inactive would always read back empty.
 """
 struct DBDFile
     filename::String
@@ -116,6 +127,7 @@ struct DBDFile
     time_var_name::String
     time_pos::Int
     decompressed::Union{Nothing,Vector{UInt8}}
+    all_sensor_names::Vector{String}
 end
 
 # ── Time-series result ────────────────────────────────────────────────────────

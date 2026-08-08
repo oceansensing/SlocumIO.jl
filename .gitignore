@@ -2,3 +2,7 @@
 Manifest.toml
 *.jl.cov
 *.jl.mem
+*.jl.*.cov
+lcov.info
+__pycache__/
+*.pyc
