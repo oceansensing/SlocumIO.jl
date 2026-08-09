@@ -7,7 +7,7 @@ authors:
     given-names: Donglai
     orcid: "https://orcid.org/0000-0002-1697-1739"
 version: 0.1.3
-date-released: "2026-08-07"
+date-released: "2026-08-08"
 license: GPL-3.0-or-later
 doi: 10.5281/zenodo.21345329
 repository-code: "https://github.com/oceansensing/SlocumIO.jl"
